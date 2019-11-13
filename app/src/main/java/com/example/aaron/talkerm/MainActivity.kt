@@ -1,6 +1,7 @@
 package com.example.aaron.talkerm
 
 import android.Manifest
+import android.annotation.TargetApi
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -11,7 +12,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraManager
+import android.media.AudioManager
+import android.media.ToneGenerator
+import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.support.annotation.RequiresApi
 import android.support.v4.app.ActivityCompat
 import android.support.v7.app.AppCompatActivity
 import android.text.method.ScrollingMovementMethod
@@ -61,25 +69,62 @@ class MainActivity : AppCompatActivity() {
         setUpButtons()
     }
 
-    private fun initializeInput(socket: BluetoothSocket) {
-        acceptPermissions()
-        setupInput(socket)
+    private fun initializeInput() {
+        setupFlashPermissions()
+        setupVibratePermissions()
     }
 
-    private fun setupInput(socket: BluetoothSocket) {
-        val inSocket: InputStream = socket.inputStream
-        val msg = ByteArray(255) //arbitrary size
-        val msgString: String
-
-        inSocket.read(msg)
-
-        msgString = msg.toString(Charsets.UTF_8)
-        echoMsg(msgString)
-    }
-
-    private fun acceptPermissions() {
+    private fun setupFlashPermissions() {
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION)
+    }
+    private fun setupVibratePermissions() {
         ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.VIBRATE), VIBRATE_PERMISSION)
+    }
+
+    private fun startBeeping() {
+        val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 100)
+        tone.startTone(ToneGenerator.TONE_DTMF_5,500)
+        Thread.sleep(800)
+        tone.startTone(ToneGenerator.TONE_DTMF_5,500)
+        Thread.sleep(800)
+        tone.startTone(ToneGenerator.TONE_DTMF_5,500)
+    }
+
+    @RequiresApi(Build.VERSION_CODES.M)
+    private fun startFlashLight() {
+        val cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        val cameraId = cameraManager.cameraIdList[0]
+
+        try {
+            cameraManager.setTorchMode(cameraId, true)
+            Thread.sleep(1_000)
+            cameraManager.setTorchMode(cameraId, false)
+            cameraManager.setTorchMode(cameraId, true)
+            Thread.sleep(1_000)
+            cameraManager.setTorchMode(cameraId, false)
+            cameraManager.setTorchMode(cameraId, true)
+            Thread.sleep(1_000)
+            cameraManager.setTorchMode(cameraId, false)
+        } catch (ioe: IOException) {
+            Log.e(TCLIENT, "IOException when startFlashLight")
+        }
+    }
+
+    private fun startVibrate() {
+        val vibrate = getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            vibrate.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
+            Thread.sleep(500)
+            vibrate.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
+            Thread.sleep(500)
+            vibrate.vibrate(VibrationEffect.createOneShot(200, VibrationEffect.DEFAULT_AMPLITUDE))
+        } else {
+            vibrate.vibrate(200)
+            Thread.sleep(500)
+            vibrate.vibrate(200)
+            Thread.sleep(500)
+            vibrate.vibrate(200)
+        }
     }
 
     /**
@@ -106,7 +151,7 @@ class MainActivity : AppCompatActivity() {
                 out = socketSending.outputStream
                 out.write(msg)
             } catch (ioe: IOException) {
-                Log.e(TCLIENT, "IOException when opening outputStream\n $ioe")
+                Log.e(TCLIENT, "IOException when flashButton Listener")
             }
         }
 
@@ -119,7 +164,7 @@ class MainActivity : AppCompatActivity() {
                 out = socketSending.outputStream
                 out.write(msg)
             } catch (ioe: IOException) {
-                Log.e(TCLIENT, "IOException when opening outputStream\n $ioe")
+                Log.e(TCLIENT, "IOException when beepButton Listener")
             }
         }
 
@@ -132,7 +177,7 @@ class MainActivity : AppCompatActivity() {
                 out = socketSending.outputStream
                 out.write(msg)
             } catch (ioe: IOException) {
-                Log.e(TCLIENT, "IOException when opening outputStream\n $ioe")
+                Log.e(TCLIENT, "IOException when vibrateButton Listener")
             }
         }
     }
@@ -309,8 +354,19 @@ class MainActivity : AppCompatActivity() {
      * This action is specific to this App.
      * @param msg The received info to display
      */
+    @TargetApi(Build.VERSION_CODES.M)
     fun echoMsg(msg: String) {
         mTextarea!!.append(msg)
+
+        if(msg == "flash") {
+            startFlashLight()
+        }
+        if(msg == "beep") {
+            startBeeping()
+        }
+        if(msg == "vibrate") {
+            startVibrate()
+        }
     }
 
     ////////////////// Client Thread to talk to Server here ///////////////////
@@ -445,6 +501,7 @@ class MainActivity : AppCompatActivity() {
 
         //manage the Server's end of the conversation on the passed-in socket
         fun manageConnectedSocket(socket: BluetoothSocket) {
+            var inSocket: InputStream?
             Log.i(TSERVER, "\nManaging the Socket\n")
             val inSt: InputStream
             val nBytes: Int
@@ -462,12 +519,29 @@ class MainActivity : AppCompatActivity() {
                 val msgString = msg.toString(Charsets.UTF_8)
                 Log.i(TSERVER, "\nServer Received  $nBytes, Bytes:  [$msgString]\n")
                 runOnUiThread { echoMsg("\nReceived $nBytes:  [$msgString]\n") }
-                runOnUiThread { initializeInput(socket) }
+                runOnUiThread { initializeInput() }
             } catch (uee: UnsupportedEncodingException) {
                 Log.e(TSERVER,
                     "UnsupportedEncodingException when converting bytes to String\n $uee")
             } finally {
                 cancel()        //for this App - close() after 1 (or no) message received
+            }
+
+            inSocket = socket.inputStream
+            val buffer = ByteArray(1024)
+            var bytes: Int
+            var message: String
+            while (true) {
+                // Read from the InputStream
+                try {
+                    bytes = inSocket.read(buffer)
+                    message = String(buffer, 0, bytes)
+                    runOnUiThread { echoMsg(message) }
+                    Log.d(TAG, "InputStream: $message")
+                } catch (ioe: IOException) {
+                    Log.e(TSERVER, "IOException when opening inputStream\n $ioe")
+                    break
+                }
             }
         }
 
