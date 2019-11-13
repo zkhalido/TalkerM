@@ -33,4 +33,36 @@
         android:layout_marginLeft="80dp"
         android:singleLine="true" />
 
+    <Button
+        android:id="@+id/flashButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@+id/scan_button"
+        android:layout_alignParentStart="true"
+        android:layout_marginTop="12dp"
+        android:text="Flash"
+        android:visibility="invisible" />
+
+    <Button
+        android:id="@+id/beepButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@+id/scan_button"
+        android:layout_marginStart="40dp"
+        android:layout_marginTop="12dp"
+        android:layout_toEndOf="@+id/flashButton"
+        android:text="Beep"
+        android:visibility="invisible" />
+
+    <Button
+        android:id="@+id/vibrateButton"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_below="@+id/scan_button"
+        android:layout_marginStart="40dp"
+        android:layout_marginTop="12dp"
+        android:layout_toEndOf="@+id/beepButton"
+        android:text="Vibrate"
+        android:visibility="invisible" />
+
 </RelativeLayout>

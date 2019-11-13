@@ -1,5 +1,6 @@
 package com.example.aaron.talkerm
 
+import android.Manifest
 import android.app.Activity
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
@@ -16,10 +17,11 @@ import android.support.v7.app.AppCompatActivity
 import android.text.method.ScrollingMovementMethod
 import android.util.Log
 import android.view.Menu
+import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
-import com.example.aaron.talkerm.R.id.scan_button
+import kotlinx.android.synthetic.main.activity_main.*
 
 import java.io.IOException
 import java.io.InputStream
@@ -33,6 +35,11 @@ class MainActivity : AppCompatActivity() {
     private var mTextarea: TextView? = null                 //for writing messages to screen
     private var server: AcceptThread? = null                //server object
     private var client:ConnectThread? = null
+    private lateinit var socketSending: BluetoothSocket
+    private var connectionEstablished: Boolean = false
+
+    private val CAMERA_PERMISSION = 200
+    private val VIBRATE_PERMISSION = 300
 
     private val mReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -46,7 +53,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         myUUID = UUID.fromString(MY_UUID_STRING)        //unique UUID (or GUID) for this App
 
-        mTextarea = findViewById(R.id.textView) as TextView?
+        mTextarea = findViewById(R.id.textView)
         if (mTextarea != null) {
             mTextarea!!.movementMethod = ScrollingMovementMethod()
             mTextarea!!.append("My UUID:  $myUUID \n")
@@ -54,16 +61,91 @@ class MainActivity : AppCompatActivity() {
         setUpButtons()
     }
 
+    private fun initializeInput(socket: BluetoothSocket) {
+        acceptPermissions()
+        setupInput(socket)
+    }
+
+    private fun setupInput(socket: BluetoothSocket) {
+        val inSocket: InputStream = socket.inputStream
+        val msg = ByteArray(255) //arbitrary size
+        val msgString: String
+
+        inSocket.read(msg)
+
+        msgString = msg.toString(Charsets.UTF_8)
+        echoMsg(msgString)
+    }
+
+    private fun acceptPermissions() {
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION)
+        ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.VIBRATE), VIBRATE_PERMISSION)
+    }
+
+    /**
+     * Once connected to a device, starts fragment with button to flash, beep, vibrate
+     */
+    private fun showButtons(socket: BluetoothSocket) {
+        Log.d(TAG, "buttons visibility")
+        setBtnListeners(socket)
+        val flashButton = findViewById<Button>(R.id.flashButton)
+        flashButton!!.visibility = View.VISIBLE
+        val beepButton = findViewById<Button>(R.id.beepButton)
+        beepButton!!.visibility = View.VISIBLE
+        val vibrateButton = findViewById<Button>(R.id.vibrateButton)
+        vibrateButton!!.visibility = View.VISIBLE
+    }
+
+    private fun setBtnListeners(socketSending: BluetoothSocket) {
+        flashButton!!.setOnClickListener {
+            val out: OutputStream
+            val theMessage = "flash"
+            val msg = theMessage.toByteArray()
+            try {
+                Log.d(TAG, "sending flash")
+                out = socketSending.outputStream
+                out.write(msg)
+            } catch (ioe: IOException) {
+                Log.e(TCLIENT, "IOException when opening outputStream\n $ioe")
+            }
+        }
+
+        beepButton!!.setOnClickListener {
+            val out: OutputStream
+            val theMessage = "beep"
+            val msg = theMessage.toByteArray()
+            try {
+                Log.d(TAG, "sending beep")
+                out = socketSending.outputStream
+                out.write(msg)
+            } catch (ioe: IOException) {
+                Log.e(TCLIENT, "IOException when opening outputStream\n $ioe")
+            }
+        }
+
+        vibrateButton!!.setOnClickListener {
+            val out: OutputStream
+            val theMessage = "vibrate"
+            val msg = theMessage.toByteArray()
+            try {
+                Log.d(TAG, "sending vibrate")
+                out = socketSending.outputStream
+                out.write(msg)
+            } catch (ioe: IOException) {
+                Log.e(TCLIENT, "IOException when opening outputStream\n $ioe")
+            }
+        }
+    }
     /**
      * Set up the listeners for the two buttons
      */
     private fun setUpButtons() {
-        val scanButton = findViewById(scan_button)
-        scanButton?.setOnClickListener {       //Scanning is the action performed by the client
+        val scanButton = findViewById<Button>(R.id.scan_button)
+        scanButton.setOnClickListener {       //Scanning is the action performed by the client
             getPairedDevices()
             setUpBroadcastReceiver()
         }
-        val connectButton = findViewById(R.id.connect_button) as Button?
+        val connectButton = findViewById<Button>(R.id.connect_button)
         connectButton?.setOnClickListener {    //This button activates the App as the server
             Log.i(TSERVER, "Connect Button setting up server")
             mTextarea!!.append("Connect Button: setting up server\n")
@@ -103,7 +185,7 @@ class MainActivity : AppCompatActivity() {
             val enableBtIntent = Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE)
             startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT)
         }
-        mTextarea?.append("This device is:  ${mBluetoothAdapter?.name} \n")
+        //mTextarea?.append("This device is:  ${mBluetoothAdapter?.name} \n")
         Log.i(LOG_TAG, "End of onResume()")
     }
 
@@ -275,6 +357,10 @@ class MainActivity : AppCompatActivity() {
             }
             Log.i(TCLIENT, "Connection Established")
             val sock = mmSocket!!
+
+            socketSending = sock
+            connectionEstablished = true
+
             // Do work to manage the connection (in a separate thread)
             manageConnectedSocket(sock)      //talk to server
         }
@@ -288,11 +374,16 @@ class MainActivity : AppCompatActivity() {
                 Log.i(TCLIENT, "Sending the message: [$theMessage]")
                 out = socket.outputStream
                 out.write(msg)
+
+                //calls to show flash beep vibrate buttons
+                runOnUiThread {
+                    showButtons(socket)
+                }
+
             } catch (ioe: IOException) {
                 Log.e(TCLIENT, "IOException when opening outputStream\n $ioe")
                 return
             }
-
         }
 
         /**
@@ -371,6 +462,7 @@ class MainActivity : AppCompatActivity() {
                 val msgString = msg.toString(Charsets.UTF_8)
                 Log.i(TSERVER, "\nServer Received  $nBytes, Bytes:  [$msgString]\n")
                 runOnUiThread { echoMsg("\nReceived $nBytes:  [$msgString]\n") }
+                runOnUiThread { initializeInput(socket) }
             } catch (uee: UnsupportedEncodingException) {
                 Log.e(TSERVER,
                     "UnsupportedEncodingException when converting bytes to String\n $uee")
@@ -401,6 +493,7 @@ class MainActivity : AppCompatActivity() {
                                                              //from www.uuidgenerator.net
         private const val SERVICE_NAME = "Talker"
         private const val LOG_TAG = "--Talker----"
+        private const val TAG = "--Buttons----"
     }
 }
 
